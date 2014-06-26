@@ -42,7 +42,7 @@
 #endif
 
 // If a texture hasn't been seen for this many frames, get rid of it.
-#define TEXTURE_KILL_AGE 200
+#define TEXTURE_KILL_AGE 1800 // [RN] Tweak: 200 -> 1800 (1 Min @ 30 FPS / 0.5 Min @ 60 FPS)
 #define TEXTURE_KILL_AGE_LOWMEM 60
 // Not used in lowmem mode.
 #define TEXTURE_SECOND_KILL_AGE 100
@@ -873,12 +873,58 @@ void TextureCache::StartFrame() {
 static inline u32 MiniHash(const u32 *ptr) {
 	return ptr[0];
 }
-
+/* [RN] Hack: Try get more cache hit without breaking any game
 static inline u32 QuickTexHash(u32 addr, int bufw, int w, int h, GETextureFormat format) {
 	const u32 sizeInRAM = (textureBitsPerPixel[format] * bufw * h) / 8;
 	const u32 *checkp = (const u32 *) Memory::GetPointer(addr);
 
 	return DoQuickTexHash(checkp, sizeInRAM);
+}
+*/
+static inline u32 QuickTexHash(u32 addr, int bufw, int w, int h, GETextureFormat format) {
+	const u32 *checkp = (const u32 *) Memory::GetPointer(addr);
+	const u32 sizeInRAMperLine = textureBitsPerPixel[format] * bufw;
+	// Original hash
+	const u32 PPSSPPhashResult = DoQuickTexHash(checkp, sizeInRAMperLine*h/8);
+	// RN hash
+	bool RNhash = false;
+	u32 RNhashResult = 0;
+	if (w>512 && h >512) // real PSP textures can't be this big... save us some trouble
+		return PPSSPPhashResult;
+	if (w==512 && h==256) {			// if texture is 512x256, only hash first 80%
+		RNhashResult = DoQuickTexHash(checkp, sizeInRAMperLine*h/8*0.8);
+		RNhash = true;
+	} else if (w==256 && h==256) {	// if texture is 256x256, only hash first 90%
+		RNhashResult = DoQuickTexHash(checkp, sizeInRAMperLine*h/8*0.9);
+		RNhash = true;
+	} else if (w==512 && h==512) {	// if texture is 512x512, only hash first 272 lines
+									// should work for most 2D game / scene
+		RNhashResult = DoQuickTexHash(checkp, sizeInRAMperLine*272/8);
+		RNhash = true;
+	} else if (w<h && h>272) {		// if texture is taller than 272, only hash first 272 lines
+									// define "taller": width < height
+		RNhashResult = DoQuickTexHash(checkp, sizeInRAMperLine*272/8);
+		RNhash = true;
+	} else if (w==512 && h==128 && bufw < 480) { // a special case, only hash first 70%
+		RNhashResult = DoQuickTexHash(checkp, sizeInRAMperLine*h/8*0.7);
+		RNhash = true;
+	} else if ((w>256 && h>128) || (h>256 && w>128)) {
+		WARN_LOG(G3D, "Texture %08x %ix%i (bufw: %i) doesn't match any pre-defined pattern", addr, w, h, bufw);
+		RNhash = false;
+	}
+	if (RNhash) { // We got a RNhash
+		if (RNhashResult == (u32)976617116) {
+			// Empty value, a lot of'em in Project Diva Extended (vertical flipped textures)
+			// Althouth this game doesn't really benifit from this hack
+			// Maybe should add a game id blacklist
+			return PPSSPPhashResult;
+		}
+		// INFO_LOG(G3D, "RNhash %u", RNhashResult);
+		return RNhashResult;
+	} else {
+		// if (RNhash)	ERROR_LOG(G3D, "RNhash EMPTY, Fallback to fullhash, bufw %i w %i h %i", bufw, w, h);
+		return PPSSPPhashResult;
+	}
 }
 
 inline bool TextureCache::TexCacheEntry::Matches(u16 dim2, u8 format2, int maxLevel2) {
@@ -1287,7 +1333,8 @@ void TextureCache::SetTexture(bool force) {
 				match = false;
 				entry->status |= TexCacheEntry::STATUS_UNRELIABLE;
 				if (entry->numFrames < TEXCACHE_FRAME_CHANGE_FREQUENT) {
-					entry->status |= TexCacheEntry::STATUS_CHANGE_FREQUENT;
+					// [RN] Hack: Frequent flag disabled
+					// entry->status |= TexCacheEntry::STATUS_CHANGE_FREQUENT;
 				}
 				entry->numFrames = 0;
 
@@ -1490,7 +1537,8 @@ void TextureCache::SetTexture(bool force) {
 			// INFO_LOG(G3D, "Skipped scaling for now..");
 		} else {
 			entry->status &= ~TexCacheEntry::STATUS_TO_SCALE;
-			texelsScaledThisFrame_ += w * h;
+			// [RN] Hack: remove max texture scales per frame limit
+			// texelsScaledThisFrame_ += w * h;
 		}
 	}
 
