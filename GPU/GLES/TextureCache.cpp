@@ -1188,6 +1188,9 @@ bool TextureCache::SetOffsetTexture(u32 offset) {
 	return success;
 }
 
+// [RN]
+int RNtexupdatecount = 0;
+
 void TextureCache::SetTexture(bool force) {
 #ifdef DEBUG_TEXTURES
 	if (SetDebugTexture()) {
@@ -1335,6 +1338,26 @@ void TextureCache::SetTexture(bool force) {
 				if (entry->numFrames < TEXCACHE_FRAME_CHANGE_FREQUENT) {
 					// [RN] Hack: Frequent flag disabled
 					// entry->status |= TexCacheEntry::STATUS_CHANGE_FREQUENT;
+					
+					// And force the flag for necessary textures.
+					if (RNtexupdatecount != 0){
+						RNtexupdatecount--;
+						entry->status |= TexCacheEntry::STATUS_CHANGE_FREQUENT;
+						// INFO_LOG(G3D, "Update Count: %i", RNtexupdatecount);
+					} else if (entry->addr == 0x04178000 && entry->fullhash == 3937775388){
+						// SAO:IM (NPJH50701) entry movie, skip for 232 updates
+						RNtexupdatecount=232;
+					} else {
+						WARN_LOG(G3D, "Texture %08x updating too frequently (w %i/%i h %i hash %u)", entry->addr, bufw, w, h, entry->fullhash);
+						/*
+						if (RNtexupdatecount==0){
+							INFO_LOG(G3D, "Start Count, hash: %u", entry->fullhash);
+						} else {
+							RNtexupdatecount++;
+							INFO_LOG(G3D, "Update Count: %i", RNtexupdatecount);
+						}*/
+					}
+
 				}
 				entry->numFrames = 0;
 
